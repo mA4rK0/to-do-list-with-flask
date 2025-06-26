@@ -1,77 +1,87 @@
-from flask import Flask, jsonify, request, make_response
+from flask import Flask, jsonify, request
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
+import os
 
 app = Flask(__name__)
 CORS(app)
 
-todos = []
-next_id = 1
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + \
+    os.path.join(basedir, 'database.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
 
 
-def find_list(todo_id):
-    for index, todo in enumerate(todos):
-        if todo['id'] == todo_id:
-            return todo, index
-    return None, -1
+class Todo(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    task = db.Column(db.String(200), nullable=False)
+    completed = db.Column(db.Boolean, default=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'task': self.task,
+            'completed': self.completed
+        }
 
 
-@app.route("/api/addToDoList", methods=['GET', 'POST'])
+with app.app_context():
+    db.create_all()
+
+
+@app.route("/api/addToDoList", methods=['POST'])
 def add_new_list():
-    global next_id
-
     if request.method == 'POST':
         data = request.get_json()
         if not data or 'task' not in data:
             return jsonify({"error": "Not a valid data"}), 400
 
-        new_todo = {
-            "id": next_id,
-            "task": data['task'],
-            "completed": False
-        }
-        todos.append(new_todo)
-        next_id += 1
-        return jsonify(new_todo), 201
+        new_todo = Todo(task=data['task'])
+        db.session.add(new_todo)
+        db.session.commit()
 
-    print("success")
-    return jsonify(todos)
+        return jsonify(new_todo.to_dict()), 201
 
 
 @app.route("/api/getToDoList", methods=['GET'])
 def get_list():
-    return jsonify(todos)
+    todos = Todo.query.all()
+    return jsonify([todo.to_dict() for todo in todos])
 
 
 @app.route("/api/updateToDoList/<int:todo_id>", methods=['PUT'])
 def update_list(todo_id):
-    todo, index = find_list(todo_id)
+    todo = Todo.query.get(todo_id)
 
-    if todo is None:
+    if not todo:
         return jsonify({"error": "List not found"}), 404
 
     data = request.get_json()
 
     if 'task' in data:
-        todo['task'] = data['task']
+        todo.task = data['task']
 
     if 'completed' in data:
-        todo['completed'] = data['completed']
+        todo.completed = data['completed']
 
-    todos[index] = todo
+    db.session.commit()
 
-    return jsonify(todo)
+    return jsonify(todo.to_dict())
 
 
 @app.route("/api/deleteToDoList/<int:todo_id>", methods=['DELETE'])
 def delete_list(todo_id):
-    todo, index = find_list(todo_id)
+    todo = Todo.query.get(todo_id)
 
-    if todo is None:
+    if not todo:
         return jsonify({"error": "List not found"}), 404
 
-    todos.pop(index)
+    db.session.delete(todo)
+    db.session.commit()
 
-    return jsonify(todo)
+    return jsonify(todo.to_dict())
 
 
 if __name__ == "__main__":
